@@ -15,14 +15,13 @@ class CalendarController extends Controller
         $events = [];
 
         foreach ($demands as $demanda) {
-            // Quantas solicitações já foram APROVADAS para este dia
             $aprovadas = DailyRequest::where('data_diaria', $demanda->data_diaria)
                 ->where('status', 'aprovada')
                 ->count();
 
             $vagas = max($demanda->qtd_funcionarios - $aprovadas, 0);
 
-            $cor = $vagas > 0 ? '#198754' : '#dc3545'; // verde se ainda tem vaga, vermelho se acabou
+            $cor = $vagas > 0 ? '#198754' : '#dc3545';
 
             $events[] = [
                 'title' => 'Vagas: ' . $vagas . '/' . $demanda->qtd_funcionarios,

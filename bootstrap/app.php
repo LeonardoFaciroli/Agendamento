@@ -13,6 +13,11 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'empresa.ativa' => \App\Http\Middleware\EnsureEmpresaAtiva::class,
+            'admin' => \App\Http\Middleware\EnsureAdmin::class,
+        ]);
+
+        $middleware->validateCsrfTokens(except: [
+            'webhooks/mercadopago',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

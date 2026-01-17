@@ -1,7 +1,5 @@
 <?php
 
-// app/Models/RegistroPresenca.php
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -14,11 +12,13 @@ class RegistroPresenca extends Model
     protected $fillable = [
         'user_id',
         'empresa_id',
+        'filial_id',
         'data_presenca',
         'hora_entrada',
         'hora_saida',
         'status_presenca',
         'status_pagamento',
+        'pagamento_id',
         'valor_diaria',
         'data_pagamento',
         'horas_trabalhadas',
@@ -26,8 +26,6 @@ class RegistroPresenca extends Model
 
     protected $casts = [
         'data_presenca'   => 'date',
-        // Guardamos apenas hora/minuto/segundo; mantemos como string para evitar
-        // concatenações com datas erradas ao calcular a jornada.
         'hora_entrada'    => 'string',
         'hora_saida'      => 'string',
         'data_pagamento'  => 'datetime',
@@ -37,5 +35,15 @@ class RegistroPresenca extends Model
     public function funcionario(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function filial(): BelongsTo
+    {
+        return $this->belongsTo(Filial::class, 'filial_id');
+    }
+
+    public function pagamento(): BelongsTo
+    {
+        return $this->belongsTo(Pagamento::class, 'pagamento_id');
     }
 }

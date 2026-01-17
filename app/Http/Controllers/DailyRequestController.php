@@ -11,24 +11,34 @@ use Illuminate\Support\Facades\Auth;
 
 class DailyRequestController extends Controller
 {
-    /**
-     * Lista todas as solicitações de diárias da EMPRESA (gerente).
-     * Rota sugerida: GET /daily-requests  -> name: daily_requests.index
-     */
-    public function index()
+public function index(Request $request)
     {
         $user = Auth::user();
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
-            abort(403, 'Apenas empresas ou gerentes podem ver as solicitações dos funcionários.');
+        if (! $user->podeGerenciarEscala()) {
+            abort(403, 'Apenas gestores ou RH podem ver as solicitacoes dos diaristas.');
         }
 
-        // Carrega usuário e turno junto
-        $requests = DailyRequest::with(['user', 'dailyShift'])
+        $statusFiltro = $request->query('status', 'todos');
+        $dataFiltro   = $request->query('data', Carbon::today()->toDateString());
+
+        $statusesValidos = ['pendente', 'aprovada', 'rejeitada', 'cancelada', 'todos'];
+        if (! in_array($statusFiltro, $statusesValidos, true)) {
+            $statusFiltro = 'todos';
+        }
+
+        $requestsQuery = DailyRequest::with(['user', 'dailyShift', 'filial'])
             ->where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
+            ->when($dataFiltro, fn ($q) => $q->whereDate('data_diaria', $dataFiltro))
             ->orderBy('data_diaria', 'asc')
-            ->orderBy('daily_shift_id', 'asc')
-            ->get();
+            ->orderBy('daily_shift_id', 'asc');
+
+        if ($statusFiltro !== 'todos') {
+            $requestsQuery->where('status', $statusFiltro);
+        }
+
+        $requests = $requestsQuery->get();
 
         $inicioMes = Carbon::now()->startOfMonth();
         $fimMes = Carbon::now()->endOfMonth();
@@ -37,6 +47,7 @@ class DailyRequestController extends Controller
 
         $presencasPorUsuario = RegistroPresenca::whereIn('user_id', $userIds)
             ->whereBetween('data_presenca', [$inicioMes, $fimMes])
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
             ->get()
             ->groupBy('user_id');
 
@@ -67,28 +78,36 @@ class DailyRequestController extends Controller
             'diasTrabalhadosPorUsuario' => $diasTrabalhadosPorUsuario,
             'pagamentosPorUsuario'      => $pagamentosPorUsuario,
             'limiteDiasMes'             => 14,
+            'statusFiltro'              => $statusFiltro,
+            'dataFiltro'                => $dataFiltro,
         ]);
     }
 
-    /**
-     * Funcionário cria uma requisição de diária, escolhendo um turno.
-     * Rota: POST /daily-requests -> name: daily_requests.store
-     */
-    public function store(Request $request)
+public function store(Request $request)
     {
         $user = Auth::user();
 
-        if (! $user->isFuncionario()) {
-            abort(403, 'Apenas funcionários podem criar requisições de diária.');
+        if (! $user->isDiarista()) {
+            abort(403, 'Apenas diaristas podem criar solicitacoes de diaria.');
         }
 
-        $validated = $request->validate([
+        $validated = $request->validateWithBag('diaria', [
             'data_diaria'    => 'required|date',
             'daily_shift_id' => 'required|exists:daily_shifts,id',
             'observacoes'    => 'nullable|string',
         ]);
 
-        // Bloqueio por dias trabalhados no mês vigente
+        $jaSolicitouNoDia = DailyRequest::where('user_id', $user->id)
+            ->whereDate('data_diaria', $validated['data_diaria'])
+            ->exists();
+
+        if ($jaSolicitouNoDia) {
+            return redirect()
+                ->route('dashboard')
+                ->withErrors(['general' => 'Voce ja solicitou uma diaria para este dia.'], 'diaria')
+                ->withInput();
+        }
+
         $inicioMes = Carbon::now()->startOfMonth();
         $fimMes = Carbon::now()->endOfMonth();
 
@@ -98,50 +117,52 @@ class DailyRequestController extends Controller
             ->count();
 
         if ($diasTrabalhadosMes >= 14) {
-            return back()
-                ->withErrors(['general' => 'Limite de 14 dias trabalhados no mês atingido.'])
+            return redirect()
+                ->route('dashboard')
+                ->withErrors(['general' => 'Limite de 14 dias trabalhados no mes atingido.'], 'diaria')
                 ->withInput();
         }
 
-        // Garante que o turno existe para a MESMA empresa e MESMO dia
         $shift = DailyShift::where('id', $validated['daily_shift_id'])
             ->where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
             ->whereDate('data_diaria', $validated['data_diaria'])
             ->firstOrFail();
 
-        // Verifica vagas disponíveis (apenas aprovadas contam)
         $aprovadas = $shift->requests()
             ->where('status', 'aprovada')
             ->count();
 
         if ($aprovadas >= $shift->vagas_totais) {
-            return back()
-                ->withErrors(['general' => 'Não há vagas aprovadas disponíveis para esse horário.'])
+            return redirect()
+                ->route('dashboard')
+                ->withErrors(['general' => 'Nao ha vagas aprovadas disponiveis para esse horario.'], 'diaria')
                 ->withInput();
         }
+
+        $filialId = $shift->filial_id ?? $user->filial_id;
 
         DailyRequest::create([
             'user_id'        => $user->id,
             'empresa_id'     => $user->empresa_id,
-            'data_diaria'    => $shift->data_diaria,        // garante mesma data do turno
+            'filial_id'      => $filialId,
+            'data_diaria'    => $shift->data_diaria,
             'daily_shift_id' => $shift->id,
             'status'         => 'pendente',
             'observacoes'    => $validated['observacoes'] ?? null,
         ]);
 
-        return back()->with('success', 'Solicitação de diária criada com sucesso e enviada para aprovação.');
+        return redirect()
+            ->route('dashboard')
+            ->with('success', 'Solicitacao de diaria criada com sucesso e enviada para aprovacao.');
     }
 
-    /**
-     * Funcionário vê apenas as solicitações dele.
-     * Rota: GET /minhas-solicitacoes -> name: daily_requests.my
-     */
-    public function myRequests()
+public function myRequests()
     {
         $user = Auth::user();
 
-        if (! $user->isFuncionario()) {
-            abort(403, 'Apenas funcionários podem ver esta página.');
+        if (! $user->isDiarista()) {
+            abort(403, 'Apenas diaristas podem ver esta pagina.');
         }
 
         $requests = DailyRequest::with('dailyShift')
@@ -156,18 +177,12 @@ class DailyRequestController extends Controller
         ]);
     }
 
-    /**
-     * Empresa altera o status de uma solicitação (aprovar, rejeitar, cancelar).
-     * Exemplo de rota:
-     *   POST /daily-requests/{id}/status  -> name: daily_requests.updateStatus
-     *   campos esperados: status = 'aprovada'|'rejeitada'|'cancelada'|'pendente'
-     */
-    public function updateStatus(Request $request, int $id)
+public function updateStatus(Request $request, int $id)
     {
         $user = Auth::user();
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
-            abort(403, 'Apenas empresas ou gerentes podem atualizar o status das solicitações.');
+        if (! $user->podeGerenciarEscala()) {
+            abort(403, 'Apenas gestores ou RH podem atualizar o status das solicitacoes.');
         }
 
         $validated = $request->validate([
@@ -177,23 +192,27 @@ class DailyRequestController extends Controller
         $dailyRequest = DailyRequest::with('dailyShift')
             ->where('id', $id)
             ->where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
             ->firstOrFail();
+
+        if ($this->requestIsPast($dailyRequest)) {
+            return back()->withErrors([
+                'general' => 'Nao e possivel alterar uma solicitacao com horario ja encerrado.',
+            ]);
+        }
 
         $novoStatus = $validated['status'];
 
-        // Se for aprovar, checa novamente as vagas do turno
         if ($novoStatus === 'aprovada' && $dailyRequest->dailyShift) {
             $shift = $dailyRequest->dailyShift;
 
-            // Conta quantas solicitações já estão aprovadas para esse turno
             $aprovadas = $shift->requests()
                 ->where('status', 'aprovada')
                 ->count();
 
-            // Se esta requisição ainda não estava aprovada, vamos somá-la
             if ($dailyRequest->status !== 'aprovada' && $aprovadas >= $shift->vagas_totais) {
                 return back()
-                    ->withErrors(['general' => 'Não há vagas disponíveis para aprovar esta solicitação.'])
+                    ->withErrors(['general' => 'NÃƒÂ£o hÃƒÂ¡ vagas disponÃƒÂ­veis para aprovar esta solicitaÃƒÂ§ÃƒÂ£o.'])
                     ->withInput();
             }
         }
@@ -202,6 +221,127 @@ class DailyRequestController extends Controller
         $dailyRequest->aprovado_por = $user->id;
         $dailyRequest->save();
 
-        return back()->with('success', 'Status da solicitação atualizado com sucesso.');
+        return back()->with('success', 'Status da solicitacao atualizado com sucesso.');
+    }
+
+    public function acceptAll(Request $request)
+    {
+        $user = Auth::user();
+
+        if (! $user->podeGerenciarEscala()) {
+            abort(403, 'Apenas gestores ou RH podem aceitar todas as solicitacoes.');
+        }
+
+        $validated = $request->validate([
+            'data' => 'required|date',
+        ]);
+
+        $data = $validated['data'];
+
+        if (Carbon::parse($data)->lt(Carbon::today())) {
+            return back()->withErrors([
+                'general' => 'Nao e possivel aceitar solicitacoes de dias que ja passaram.',
+            ]);
+        }
+
+        $shifts = DailyShift::where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
+            ->whereDate('data_diaria', $data)
+            ->get();
+
+        $totalAprovadas = 0;
+        $totalPendentes = 0;
+        $pendentesIgnoradas = 0;
+
+        foreach ($shifts as $shift) {
+            if ($this->shiftIsPast($shift)) {
+                $pendentesIgnoradas += DailyRequest::where('daily_shift_id', $shift->id)
+                    ->where('empresa_id', $user->empresa_id)
+                    ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
+                    ->where('status', 'pendente')
+                    ->count();
+                continue;
+            }
+
+            $aprovadas = DailyRequest::where('daily_shift_id', $shift->id)
+                ->where('empresa_id', $user->empresa_id)
+                ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
+                ->where('status', 'aprovada')
+                ->count();
+
+            $disponiveis = max(0, $shift->vagas_totais - $aprovadas);
+
+            if ($disponiveis === 0) {
+                continue;
+            }
+
+            $pendentes = DailyRequest::where('daily_shift_id', $shift->id)
+                ->where('empresa_id', $user->empresa_id)
+                ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
+                ->where('status', 'pendente')
+                ->orderBy('created_at')
+                ->get();
+
+            $totalPendentes += $pendentes->count();
+
+            $selecionadas = $pendentes->take($disponiveis);
+
+            foreach ($selecionadas as $requestItem) {
+                $requestItem->status = 'aprovada';
+                $requestItem->aprovado_por = $user->id;
+                $requestItem->save();
+            }
+
+            $totalAprovadas += $selecionadas->count();
+        }
+
+        if ($totalPendentes === 0) {
+            if ($pendentesIgnoradas > 0) {
+                return back()->withErrors([
+                    'general' => 'Horario ja passou. Nao e possivel aceitar solicitacoes desta data.',
+                ]);
+            }
+
+            return back()->withErrors(['general' => 'Nao ha solicitacoes pendentes para esta data.']);
+        }
+
+        $restantes = max(0, $totalPendentes - $totalAprovadas);
+        $mensagem = 'Solicitacoes aprovadas: ' . $totalAprovadas . '.';
+
+        if ($restantes > 0) {
+            $mensagem .= ' Restaram ' . $restantes . ' pendentes por falta de vagas.';
+        }
+
+        return back()->with('success', $mensagem);
+    }
+
+    protected function requestIsPast(DailyRequest $request): bool
+    {
+        if ($request->dailyShift) {
+            return $this->shiftIsPast($request->dailyShift);
+        }
+
+        if ($request->data_diaria) {
+            return Carbon::parse($request->data_diaria)->lt(Carbon::today());
+        }
+
+        return false;
+    }
+
+    protected function shiftIsPast(DailyShift $shift): bool
+    {
+        $data = $shift->data_diaria instanceof Carbon
+            ? $shift->data_diaria->copy()
+            : Carbon::parse($shift->data_diaria);
+
+        $dataBase = $data->format('Y-m-d');
+        $inicio = Carbon::parse($dataBase . ' ' . $shift->hora_inicio);
+        $fim = Carbon::parse($dataBase . ' ' . $shift->hora_fim);
+
+        if ($fim->lessThanOrEqualTo($inicio)) {
+            $fim->addDay();
+        }
+
+        return Carbon::now()->greaterThanOrEqualTo($fim);
     }
 }

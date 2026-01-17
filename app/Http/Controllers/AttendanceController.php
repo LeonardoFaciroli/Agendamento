@@ -11,80 +11,22 @@ use Illuminate\Support\Facades\Auth;
 
 class AttendanceController extends Controller
 {
-    /**
-     * Tela que abre a camera e lê o QR (empresa / gerente / porteiro).
-     */
-    public function scanner()
+public function listarEscalados(Request $request)
     {
         $usuarioLogado = Auth::user();
 
         if (! $usuarioLogado->podeRegistrarPresenca()) {
-            abort(403, 'Apenas empresa, gerentes ou porteiros podem acessar o leitor de QR Code.');
+            abort(403, 'Apenas porteiros podem acessar os escalados.');
         }
 
-        return view('presenca.scanner', [
-            'user' => $usuarioLogado,
-        ]);
-    }
-
-    /**
-     * Rota chamada quando o QRCode é escaneado.
-     * A URL dentro do QR aponta para esta rota.
-     */
-    public function registrarViaQr(string $token)
-    {
-        $usuarioLogado = Auth::user();
-
-        if (! $usuarioLogado->podeRegistrarPresenca()) {
-            abort(403, 'Apenas empresa, gerentes ou porteiros podem registrar presença via QR Code.');
-        }
-
-        $funcionario = User::where('qr_token', $token)->first();
-
-        if (! $funcionario) {
-            abort(404, 'Funcionário não encontrado para este QR Code.');
-        }
-
-        if ($usuarioLogado->empresa_id !== null && $funcionario->empresa_id !== null) {
-            if ($usuarioLogado->empresa_id !== $funcionario->empresa_id) {
-                abort(403, 'Você não tem permissão para registrar presença de funcionários de outra empresa.');
-            }
-        }
-
-        $dataHoje = Carbon::today()->toDateString();
-        $agora    = Carbon::now();
-
-        [$registroPresenca, $mensagem] = $this->registrarPresencaParaUsuario(
-            $funcionario,
-            $agora,
-            $dataHoje
-        );
-
-        return view('presenca.confirmacao', [
-            'funcionario' => $funcionario,
-            'registro'    => $registroPresenca,
-            'mensagem'    => $mensagem,
-        ]);
-    }
-
-    /**
-     * Lista escalados do dia (por turno) para registro manual de presença.
-     */
-    public function listarEscalados(Request $request)
-    {
-        $usuarioLogado = Auth::user();
-
-        if (! $usuarioLogado->podeRegistrarPresenca()) {
-            abort(403, 'Apenas empresa, gerentes ou porteiros podem acessar os escalados.');
-        }
-
-        $dataSelecionada = $request->query('data', Carbon::today()->toDateString());
+        $dataSelecionada   = $request->query('data', Carbon::today()->toDateString());
+        $turnoSelecionadoId = $request->query('turno_id');
 
         $turnosQuery = DailyShift::with(['requests' => function ($query) use ($dataSelecionada) {
                 $query->whereDate('data_diaria', $dataSelecionada)
                     ->where('status', 'aprovada')
                     ->with('user');
-            }])
+            }, 'filial'])
             ->whereDate('data_diaria', $dataSelecionada)
             ->orderBy('hora_inicio');
 
@@ -92,46 +34,68 @@ class AttendanceController extends Controller
             $turnosQuery->where('empresa_id', $usuarioLogado->empresa_id);
         }
 
-        $turnos = $turnosQuery->get();
-
-        $userIds = $turnos->flatMap(function (DailyShift $shift) {
-            return $shift->requests->pluck('user_id');
-        })->unique()->values();
-
-        $presencasQuery = RegistroPresenca::whereIn('user_id', $userIds)
-            ->whereDate('data_presenca', $dataSelecionada);
-
-        if ($usuarioLogado->empresa_id !== null) {
-            $presencasQuery->where('empresa_id', $usuarioLogado->empresa_id);
+        if ($usuarioLogado->filial_id !== null) {
+            $turnosQuery->where('filial_id', $usuarioLogado->filial_id);
         }
 
-        $presencas = $presencasQuery->get()->keyBy('user_id');
+        $turnos = $turnosQuery->get();
+
+        $turnoSelecionado = $turnos->firstWhere('id', (int) $turnoSelecionadoId)
+            ?? $turnos->first();
+
+        $escalados = collect();
+        $presencas = collect();
+
+        if ($turnoSelecionado) {
+            $escalados = $turnoSelecionado->requests;
+
+            $userIds = $escalados->pluck('user_id')
+                ->unique()
+                ->values();
+
+            $presencasQuery = RegistroPresenca::whereIn('user_id', $userIds)
+                ->whereDate('data_presenca', $dataSelecionada);
+
+            if ($usuarioLogado->empresa_id !== null) {
+                $presencasQuery->where('empresa_id', $usuarioLogado->empresa_id);
+            }
+
+            if ($usuarioLogado->filial_id !== null) {
+                $presencasQuery->where('filial_id', $usuarioLogado->filial_id);
+            }
+
+            $presencas = $presencasQuery->get()->keyBy('user_id');
+        }
 
         return view('presenca.escalados', [
             'turnos'          => $turnos,
+            'turnoSelecionado'=> $turnoSelecionado,
+            'escalados'       => $escalados,
             'presencas'       => $presencas,
             'dataSelecionada' => $dataSelecionada,
             'usuarioLogado'   => $usuarioLogado,
         ]);
     }
 
-    /**
-     * Registrar presença manualmente (entrada/saída) para um funcionário escalado.
-     */
-    public function registrarManual(Request $request, int $userId)
+public function registrarManual(Request $request, int $userId)
     {
         $usuarioLogado = Auth::user();
 
         if (! $usuarioLogado->podeRegistrarPresenca()) {
-            abort(403, 'Apenas empresa, gerentes ou porteiros podem registrar presença.');
+            abort(403, 'Apenas porteiros podem registrar presenca.');
         }
 
         $dataPresenca = $request->input('data_presenca', Carbon::today()->toDateString());
+        $turnoId = $request->input('turno_id');
 
         $funcionarioQuery = User::where('id', $userId);
 
         if ($usuarioLogado->empresa_id !== null) {
             $funcionarioQuery->where('empresa_id', $usuarioLogado->empresa_id);
+        }
+
+        if ($usuarioLogado->filial_id !== null) {
+            $funcionarioQuery->where('filial_id', $usuarioLogado->filial_id);
         }
 
         $funcionario = $funcionarioQuery->firstOrFail();
@@ -144,16 +108,18 @@ class AttendanceController extends Controller
             $dataPresenca
         );
 
+        $params = ['data' => $dataPresenca];
+        if ($turnoId) {
+            $params['turno_id'] = $turnoId;
+        }
+
         return redirect()
-            ->route('presenca.escalados', ['data' => $dataPresenca])
+            ->route('presenca.escalados', $params)
             ->with('success', "{$funcionario->name}: {$mensagem}")
             ->with('registro_atualizado', $registro->id);
     }
 
-    /**
-     * Listar presenças com status_pagamento = pendente para serem pagas.
-     */
-    public function listarParaPagamento(Request $request)
+public function listarParaPagamento(Request $request)
     {
         $usuarioLogado = Auth::user();
 
@@ -167,6 +133,10 @@ class AttendanceController extends Controller
 
         if ($usuarioLogado->empresa_id !== null) {
             $query->where('empresa_id', $usuarioLogado->empresa_id);
+        }
+
+        if ($usuarioLogado->filial_id !== null) {
+            $query->where('filial_id', $usuarioLogado->filial_id);
         }
 
         if ($dataInicial) {
@@ -186,17 +156,20 @@ class AttendanceController extends Controller
         ]);
     }
 
-    /**
-     * Marcar um registro de presença como pago.
-     */
-    public function marcarComoPago(Request $request, int $id)
+public function marcarComoPago(Request $request, int $id)
     {
         $usuarioLogado = Auth::user();
         $registro = RegistroPresenca::findOrFail($id);
 
         if ($usuarioLogado->empresa_id !== null && $registro->empresa_id !== null) {
             if ($usuarioLogado->empresa_id !== $registro->empresa_id) {
-                abort(403, 'Você não tem permissão para alterar registros de outra empresa.');
+                abort(403, 'VocÃª nÃ£o tem permissÃ£o para alterar registros de outra empresa.');
+            }
+        }
+
+        if ($usuarioLogado->filial_id !== null && $registro->filial_id !== null) {
+            if ($usuarioLogado->filial_id !== $registro->filial_id) {
+                abort(403, 'Voce nao tem permissao para alterar registros de outra filial.');
             }
         }
 
@@ -212,15 +185,10 @@ class AttendanceController extends Controller
 
         return redirect()
             ->back()
-            ->with('success', 'Pagamento registrado com sucesso para este funcionário.');
+            ->with('success', 'Pagamento registrado com sucesso para este funcionÃ¡rio.');
     }
 
-    /**
-     * Centraliza a lógica de registrar entrada/saída para um usuário e data.
-     *
-     * @return array{0: RegistroPresenca, 1: string}
-     */
-    protected function registrarPresencaParaUsuario(User $funcionario, Carbon $momento, string $dataPresenca): array
+protected function registrarPresencaParaUsuario(User $funcionario, Carbon $momento, string $dataPresenca): array
     {
         $registroPresenca = RegistroPresenca::where('user_id', $funcionario->id)
             ->whereDate('data_presenca', $dataPresenca)
@@ -233,6 +201,7 @@ class AttendanceController extends Controller
             $registroPresenca = new RegistroPresenca();
             $registroPresenca->user_id           = $funcionario->id;
             $registroPresenca->empresa_id        = $funcionario->empresa_id;
+            $registroPresenca->filial_id         = $funcionario->filial_id;
             $registroPresenca->data_presenca     = $dataPresenca;
             $registroPresenca->hora_entrada      = $horaAtual;
             $registroPresenca->hora_saida        = null;
@@ -255,7 +224,6 @@ class AttendanceController extends Controller
             $entradaDateTime = Carbon::parse($dataPresenca)->setTimeFromTimeString($horaEntrada);
             $saidaDateTime   = Carbon::parse($dataPresenca)->setTimeFromTimeString($horaSaida);
 
-            // Lida com turnos que viram o dia (saída < entrada)
             if ($saidaDateTime->lt($entradaDateTime)) {
                 $saidaDateTime->addDay();
             }
@@ -266,9 +234,9 @@ class AttendanceController extends Controller
                 $registroPresenca->horas_trabalhadas = round($minutos / 60, 2);
             }
 
-            $mensagem = 'Saída registrada com sucesso.';
+            $mensagem = 'SaÃ­da registrada com sucesso.';
         } else {
-            $mensagem = 'Entrada e saída já foram registradas para esta data.';
+            $mensagem = 'Entrada e saÃ­da jÃ¡ foram registradas para esta data.';
         }
 
         $registroPresenca->save();
@@ -276,3 +244,4 @@ class AttendanceController extends Controller
         return [$registroPresenca, $mensagem];
     }
 }
+

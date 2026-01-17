@@ -12,47 +12,41 @@ class DailyRequest extends Model
     protected $table = 'daily_requests';
 
     protected $fillable = [
-        'user_id',         // ID do funcionário que fez a requisição
-        'empresa_id',      // ID da empresa ligada à requisição
-        'data_diaria',     // Data da diária
-        'daily_shift_id',  // ID do turno/horário
-        'status',          // Status da requisição
-        'observacoes',     // Observações da requisição
-        'aprovado_por',    // ID do usuário que aprovou/recusou
+        'user_id',
+        'empresa_id',
+        'filial_id',
+        'data_diaria',
+        'daily_shift_id',
+        'status',
+        'observacoes',
+        'aprovado_por',
     ];
 
     protected $casts = [
         'data_diaria' => 'date',
     ];
 
-    /**
-     * Funcionário que fez a requisição.
-     */
-    public function user()
+public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    /**
-     * Empresa dona da requisição.
-     */
-    public function empresa()
+public function empresa()
     {
         return $this->belongsTo(Empresa::class, 'empresa_id');
     }
 
-    /**
-     * Usuário (empresa/gestor) que aprovou.
-     */
-    public function aprovador()
+    public function filial()
+    {
+        return $this->belongsTo(Filial::class, 'filial_id');
+    }
+
+public function aprovador()
     {
         return $this->belongsTo(User::class, 'aprovado_por');
     }
 
-    /**
-     * Turno/horário escolhido.
-     */
-    public function dailyShift()
+public function dailyShift()
     {
         return $this->belongsTo(DailyShift::class, 'daily_shift_id');
     }

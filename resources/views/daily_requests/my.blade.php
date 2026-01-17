@@ -1,5 +1,3 @@
-{{-- resources/views/daily_requests/my.blade.php --}}
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -9,6 +7,7 @@
 
     <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ asset('css/theme.css') }}">
 
     <style>
         body {
@@ -17,24 +16,28 @@
     </style>
 </head>
 <body>
-    {{-- Navbar igual à do dashboard --}}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ route('dashboard') }}">Controle de Diárias</a>
 
             <div class="d-flex ms-auto align-items-center gap-3">
-                @if ($user->isFuncionario())
+                @if ($user->isDiarista())
                     <a href="{{ route('daily_requests.my') }}"
                        class="btn btn-outline-light btn-sm active">
                         Solicitações
                     </a>
                 @endif
 
+                <a href="{{ route('dashboard') }}"
+                   class="btn btn-outline-light btn-sm">
+                    Voltar
+                </a>
+
                 <span class="navbar-text text-white">
                     Logado como: {{ $user->name }} ({{ $user->role }})
                 </span>
 
-                <form method="POST" action="{{ route('auth.logout') }}" class="d-inline">
+                <form method="POST" action="{{ route('auth.logout', [], false) }}" class="d-inline">
                     @csrf
                     <button type="submit" class="btn btn-outline-light btn-sm">
                         Sair

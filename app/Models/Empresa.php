@@ -1,21 +1,16 @@
 <?php
-// Indica que este arquivo contém código PHP
-namespace App\Models; // Define o namespace da classe (pasta lógica dentro do projeto)
+namespace App\Models;
 
-// Importa a classe base Model do Laravel
-use Illuminate\Database\Eloquent\Factories\HasFactory; // Importa trait para usar factories
-use Illuminate\Database\Eloquent\Model;                // Importa a classe Model
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 
-// Declara a classe Empresa que representa a tabela 'empresas'
 class Empresa extends Model
 {
-    // Usa a trait HasFactory para facilitar criação de instâncias em testes
     use HasFactory;
 
-    // Define quais colunas podem ser preenchidas em massa (mass assignment)
     protected $fillable = [
-        'nome', // Nome da empresa
-        'billing_status', // active, past_due, canceled
+        'nome',
+        'billing_status',
         'paid_until',
         'mercadopago_preapproval_id',
         'mercadopago_payer_id',
@@ -26,17 +21,19 @@ class Empresa extends Model
         'paid_until' => 'date',
     ];
 
-    // Define o relacionamento: uma empresa tem muitos usuários
     public function usuarios()
     {
-        // Retorna a relação hasMany com o model User
         return $this->hasMany(User::class, 'empresa_id');
     }
 
-    // Define o relacionamento: uma empresa tem muitas requisições de diaria
+    public function filiais()
+    {
+        return $this->hasMany(Filial::class, 'empresa_id');
+    }
+
     public function dailyRequests()
     {
-        // Retorna a relação hasMany com o model DailyRequest
         return $this->hasMany(DailyRequest::class, 'empresa_id');
     }
+
 }

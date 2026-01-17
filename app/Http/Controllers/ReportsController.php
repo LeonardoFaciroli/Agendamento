@@ -15,8 +15,8 @@ class ReportsController extends Controller
     {
         $user = Auth::user();
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
-            abort(403, 'Apenas empresa ou gerente podem acessar os relatórios.');
+        if (! $user->isGestor()) {
+            abort(403, 'Apenas gestores podem acessar os relatorios.');
         }
 
         $filtro = $request->input('periodo', 'mes');
@@ -29,18 +29,20 @@ class ReportsController extends Controller
         } elseif ($filtro === 'semana') {
             $inicio = $dataBaseCarbon->copy()->startOfWeek();
             $fim    = $dataBaseCarbon->copy()->endOfWeek();
-        } else { // mês (default)
+        } else {
             $inicio = $dataBaseCarbon->copy()->startOfMonth();
             $fim    = $dataBaseCarbon->copy()->endOfMonth();
         }
 
         $shifts = DailyShift::where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
             ->whereBetween('data_diaria', [$inicio->toDateString(), $fim->toDateString()])
             ->get();
 
         $totalVagas = $shifts->sum('vagas_totais');
 
         $ocupadas = DailyRequest::where('empresa_id', $user->empresa_id)
+            ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
             ->where('status', 'aprovada')
             ->whereBetween('data_diaria', [$inicio->toDateString(), $fim->toDateString()])
             ->count();
@@ -53,6 +55,7 @@ class ReportsController extends Controller
             $vagas = $lista->sum('vagas_totais');
 
             $aprovadasDia = DailyRequest::where('empresa_id', $user->empresa_id)
+                ->when($user->filial_id, fn ($q) => $q->where('filial_id', $user->filial_id))
                 ->where('status', 'aprovada')
                 ->whereDate('data_diaria', $data)
                 ->count();
@@ -76,15 +79,12 @@ class ReportsController extends Controller
         ]);
     }
 
-    /**
-     * Gera PDF simples com pagamentos pendentes no período filtrado.
-     */
-    public function pendentesPdf(Request $request)
+public function pendentesPdf(Request $request)
     {
         $user = Auth::user();
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
-            abort(403, 'Apenas empresa ou gerente podem gerar relatórios.');
+        if (! $user->isGestor()) {
+            abort(403, 'Apenas gestores podem gerar relatorios.');
         }
 
         $dataInicial = $request->input('data_inicial');
@@ -95,6 +95,10 @@ class ReportsController extends Controller
 
         if ($user->empresa_id !== null) {
             $query->where('empresa_id', $user->empresa_id);
+        }
+
+        if ($user->filial_id !== null) {
+            $query->where('filial_id', $user->filial_id);
         }
 
         if ($dataInicial) {
@@ -142,10 +146,7 @@ class ReportsController extends Controller
             ->header('Content-Length', strlen($pdf));
     }
 
-    /**
-     * Gera PDF mínimo em texto usando fontes básicas (Helvetica).
-     */
-    protected function montarPdfTexto(array $linhas): string
+protected function montarPdfTexto(array $linhas): string
     {
         $escape = fn (string $text) => str_replace(
             ['\\', '(', ')'],

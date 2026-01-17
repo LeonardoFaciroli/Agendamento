@@ -11,10 +11,8 @@ class DailyDemandController extends Controller
     {
         $user = auth()->user();
 
-        // Aqui você pode ajustar a regra de permissão:
-        // Por enquanto, só "empresa" pode definir demanda.
-        if ($user->role !== 'empresa') {
-            abort(403, 'Apenas usuários com cargo de empresa podem definir demanda.');
+        if (! $user->podeGerenciarEscala()) {
+            abort(403, 'Apenas gestores ou RH podem definir demanda.');
         }
 
         $dados = $request->validate([
@@ -22,13 +20,11 @@ class DailyDemandController extends Controller
             'qtd_funcionarios' => 'required|integer|min:1',
         ]);
 
-        // Cria ou atualiza a demanda daquele dia
         DailyDemand::updateOrCreate(
             ['data_diaria' => $dados['data_diaria']],
             ['qtd_funcionarios' => $dados['qtd_funcionarios']]
         );
 
-        // Se vier via AJAX, devolve JSON
         if ($request->wantsJson()) {
             return response()->json(['ok' => true]);
         }

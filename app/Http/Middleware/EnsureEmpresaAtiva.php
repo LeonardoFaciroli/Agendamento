@@ -2,39 +2,47 @@
 
 namespace App\Http\Middleware;
 
-use Carbon\Carbon;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureEmpresaAtiva
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $user = Auth::user();
+        $user = $request->user();
 
-        if (! $user || ! $user->empresa) {
+        if (! $user || $user->isAdmin()) {
+            return $next($request);
+        }
+
+        if ($request->routeIs('billing.*') || $request->routeIs('auth.logout')) {
             return $next($request);
         }
 
         $empresa = $user->empresa;
-        $status = $empresa->billing_status ?? 'past_due';
-        $paidUntil = $empresa->paid_until ? Carbon::parse($empresa->paid_until) : null;
 
-        $estaAtiva = $status === 'active' && (! $paidUntil || $paidUntil->isFuture() || $paidUntil->isToday());
-
-        // Permitir acesso às páginas de billing e logout mesmo se inativa
-        if (! $estaAtiva) {
-            if ($request->routeIs('billing.*') || $request->routeIs('auth.logout')) {
-                return $next($request);
-            }
-
-            return redirect()
-                ->route('billing.index')
-                ->with('error', 'Sua empresa está inadimplente ou sem assinatura. Regularize o pagamento para continuar.');
+        if (! $empresa) {
+            return $next($request);
         }
 
-        return $next($request);
+        $ativo = $empresa->billing_status === 'active';
+        $pago = $empresa->paid_until
+            && ($empresa->paid_until->isToday() || $empresa->paid_until->isFuture());
+
+        if ($ativo || $pago) {
+            return $next($request);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Assinatura pendente. Regularize para continuar.',
+            ], 402);
+        }
+
+        return redirect()
+            ->route('billing.index')
+            ->withErrors(['general' => 'Assinatura pendente. Regularize para continuar.']);
+
     }
 }

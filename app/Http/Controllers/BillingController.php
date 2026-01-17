@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Http;
 
 class BillingController extends Controller
 {
-    protected int $price = 25000; // centavos (R$ 250,00)
+    protected int $price = 25000;
 
     public function index()
     {
@@ -21,7 +21,7 @@ class BillingController extends Controller
             'user' => $user,
             'empresa' => $empresa,
             'price' => $this->price,
-            'isBillingManager' => $user->isEmpresa() || $user->isGerente(),
+            'isBillingManager' => $user->isGestor(),
         ]);
     }
 
@@ -30,16 +30,20 @@ class BillingController extends Controller
         $user = Auth::user();
         $empresa = $user->empresa;
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
+        if (! $user->isGestor()) {
             abort(403, 'Apenas empresa ou gerente podem criar a assinatura.');
         }
+
+        $request->validate([
+            'payer_email' => 'required|email',
+        ]);
 
         $accessToken = config('services.mercadopago.access_token');
         if (! $accessToken) {
             return back()->withErrors(['general' => 'Configure MERCADOPAGO_ACCESS_TOKEN no .env.']);
         }
 
-        $payerEmail = $request->input('payer_email', $user->email);
+        $payerEmail = trim((string) $request->input('payer_email'));
 
         $payload = [
             'reason' => 'Mensalidade Controle de Diarias',
@@ -85,15 +89,12 @@ class BillingController extends Controller
             ->with('success', 'Retornamos do Mercado Pago. Aguarde a confirmação da assinatura (webhook).');
     }
 
-    /**
-     * Atualiza empresa após confirmação manual (fallback) buscando status na API.
-     */
-    public function sync(Request $request)
+public function sync(Request $request)
     {
         $user = Auth::user();
         $empresa = $user->empresa;
 
-        if (! ($user->isEmpresa() || $user->isGerente())) {
+        if (! $user->isGestor()) {
             abort(403);
         }
 

@@ -16,8 +16,7 @@ class User extends Authenticatable
         'password',
         'role',
         'empresa_id',
-        'qr_token',
-        'invitation_token',
+        'filial_id',
     ];
 
     protected $hidden = [
@@ -35,6 +34,11 @@ class User extends Authenticatable
         return $this->belongsTo(Empresa::class, 'empresa_id');
     }
 
+    public function filial()
+    {
+        return $this->belongsTo(Filial::class, 'filial_id');
+    }
+
     public function dailyRequests()
     {
         return $this->hasMany(DailyRequest::class, 'user_id');
@@ -45,31 +49,83 @@ class User extends Authenticatable
         return $this->hasMany(RegistroPresenca::class, 'user_id');
     }
 
+    public function diarista()
+    {
+        return $this->hasOne(Diarista::class, 'user_id');
+    }
+
+    public function gestor()
+    {
+        return $this->hasOne(Gestor::class, 'user_id');
+    }
+
+    public function supervisor()
+    {
+        return $this->hasOne(Supervisor::class, 'user_id');
+    }
+
+    public function rh()
+    {
+        return $this->hasOne(Rh::class, 'user_id');
+    }
+
+    public function adminProfile()
+    {
+        return $this->hasOne(Admin::class, 'user_id');
+    }
+
+    public function isGestor(): bool
+    {
+        return in_array($this->role, ['gestor', 'empresa', 'gerente'], true);
+    }
+
+    public function isSupervisor(): bool
+    {
+        return in_array($this->role, ['supervisor', 'porteiro'], true);
+    }
+
+    public function isRh(): bool
+    {
+        return $this->role === 'rh';
+    }
+
+    public function isDiarista(): bool
+    {
+        return in_array($this->role, ['diarista', 'funcionario'], true);
+    }
+
     public function isEmpresa(): bool
     {
-        return $this->role === 'empresa';
+        return $this->isGestor();
     }
 
     public function isFuncionario(): bool
     {
-        return $this->role === 'funcionario';
+        return $this->isDiarista();
     }
 
     public function isGerente(): bool
     {
-        return $this->role === 'gerente';
+        return $this->isGestor();
     }
 
     public function isPorteiro(): bool
     {
-        return $this->role === 'porteiro';
+        return $this->isSupervisor();
     }
 
-    /**
-     * Pode registrar presença via QR: empresa, gerente e porteiro.
-     */
-    public function podeRegistrarPresenca(): bool
+    public function isAdmin(): bool
     {
-        return $this->isEmpresa() || $this->isGerente() || $this->isPorteiro();
+        return $this->role === 'admin';
+    }
+
+public function podeRegistrarPresenca(): bool
+    {
+        return $this->isSupervisor();
+    }
+
+    public function podeGerenciarEscala(): bool
+    {
+        return $this->isGestor() || $this->isRh();
     }
 }

@@ -11,10 +11,9 @@ return new class extends Migration
         Schema::create('daily_demands', function (Blueprint $table) {
             $table->id();
             $table->date('data_diaria');
-            $table->unsignedInteger('qtd_funcionarios'); // quantos funcionários são necessários neste dia
+            $table->unsignedInteger('qtd_funcionarios');
             $table->timestamps();
 
-            // Garante que só exista uma demanda por dia
             $table->unique('data_diaria');
         });
     }

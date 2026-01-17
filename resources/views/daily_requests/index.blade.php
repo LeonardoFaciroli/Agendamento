@@ -1,33 +1,81 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    {{-- Define o conjunto de caracteres --}}
     <meta charset="UTF-8">
-    {{-- Ajusta para dispositivos móveis --}}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {{-- Título da página --}}
     <title>Requisições de Diárias</title>
 
-    {{-- Importa CSS do Bootstrap --}}
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ asset('css/theme.css') }}">
 </head>
 <body class="bg-light">
-    {{-- Container principal --}}
     <div class="container mt-4">
-        {{-- Cabeçalho com título e botão voltar --}}
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h3>Requisições de Diárias dos Funcionários</h3>
             <a href="{{ route('dashboard') }}" class="btn btn-secondary">Voltar ao Dashboard</a>
         </div>
 
-        {{-- Mensagem de sucesso, se existir --}}
         @if (session('success'))
             <div class="alert alert-success">
                 {{ session('success') }}
             </div>
         @endif
 
-        {{-- Tabela de requisições --}}
+        @if ($errors->any())
+            <div class="alert alert-danger">
+                <ul class="mb-0">
+                    @foreach ($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <form method="GET" action="{{ route('daily_requests.index', [], false) }}" class="row g-3 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label">Data</label>
+                        <input type="date" name="data" value="{{ $dataFiltro ?? \Carbon\Carbon::today()->toDateString() }}" class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Status</label>
+                        <select name="status" class="form-select">
+                            @php
+                                $opts = [
+                                    'todos'     => 'Todos',
+                                    'pendente'  => 'Pendentes',
+                                    'aprovada'  => 'Aprovadas',
+                                    'rejeitada' => 'Rejeitadas',
+                                    'cancelada' => 'Canceladas',
+                                ];
+                            @endphp
+                            @foreach ($opts as $valor => $label)
+                                <option value="{{ $valor }}" {{ ($statusFiltro ?? 'todos') === $valor ? 'selected' : '' }}>
+                                    {{ $label }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-md-4 d-flex gap-2 align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Filtrar</button>
+                        <a href="{{ route('daily_requests.index') }}" class="btn btn-outline-secondary">Hoje</a>
+                    </div>
+                </form>
+                <div class="small text-muted mt-2">
+                    Por padrão mostramos apenas as solicitações do dia vigente ({{ \Carbon\Carbon::today()->format('d/m/Y') }}). Use o filtro para outros dias ou status.
+                </div>
+                <form method="POST" action="{{ route('daily_requests.acceptAll', [], false) }}" class="d-flex justify-content-end mt-3">
+                    @csrf
+                    <input type="hidden" name="data" value="{{ $dataFiltro ?? \Carbon\Carbon::today()->toDateString() }}">
+                    <button type="submit" class="btn btn-primary"
+                            onclick="return confirm('Aceitar todas as solicitacoes pendentes desta data?');">
+                        Aceitar todas
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <table class="table table-striped table-bordered align-middle">
             <thead class="table-dark">
                 <tr>
@@ -41,7 +89,6 @@
                 </tr>
             </thead>
             <tbody>
-                {{-- Percorre todas as requisições passadas pelo controller --}}
                 @forelse ($requests as $req)
                     @php
                         $dataFormatada = $req->data_diaria
@@ -52,9 +99,27 @@
                         $horaFim    = $req->dailyShift ? substr($req->dailyShift->hora_fim, 0, 5) : '-';
                         $infoPagamento = $pagamentosPorUsuario[$req->user_id] ?? ['pendentes' => 0, 'pagos' => 0, 'ultimo_valor' => null];
                         $diasTrabalhados = $diasTrabalhadosPorUsuario[$req->user_id] ?? [];
+                        $turnoPassou = false;
+
+                        if ($req->dailyShift) {
+                            $dataBase = \Carbon\Carbon::parse($req->dailyShift->data_diaria)->format('Y-m-d');
+                            $inicioTurno = \Carbon\Carbon::parse($dataBase . ' ' . $req->dailyShift->hora_inicio);
+                            $fimTurno = \Carbon\Carbon::parse($dataBase . ' ' . $req->dailyShift->hora_fim);
+
+                            if ($fimTurno->lessThanOrEqualTo($inicioTurno)) {
+                                $fimTurno->addDay();
+                            }
+
+                            $turnoPassou = \Carbon\Carbon::now()->greaterThanOrEqualTo($fimTurno);
+                        } elseif ($req->data_diaria) {
+                            $turnoPassou = \Carbon\Carbon::parse($req->data_diaria)->lt(\Carbon\Carbon::today());
+                        }
                     @endphp
                     <tr>
                         <td>{{ $req->user->name }}</td>
+                        @if (! $user->filial_id)
+                            <td>{{ $req->filial->nome ?? '-' }}</td>
+                        @endif
                         <td>{{ $dataFormatada }}</td>
                         <td>{{ $horaInicio }} - {{ $horaFim }}</td>
                         <td>
@@ -72,33 +137,36 @@
                         <td>
                             <div class="btn-group" role="group">
                                 <form method="POST"
-                                      action="{{ route('daily_requests.updateStatus', $req->id) }}"
+                                      action="{{ route('daily_requests.updateStatus', $req->id, false) }}"
                                       class="d-inline">
                                     @csrf
                                     <input type="hidden" name="status" value="aprovada">
-                                    <button type="submit" class="btn btn-success btn-sm">
+                                    <button type="submit" class="btn btn-success btn-sm" {{ $turnoPassou ? 'disabled' : '' }}>
                                         Aprovar
                                     </button>
                                 </form>
                                 <form method="POST"
-                                      action="{{ route('daily_requests.updateStatus', $req->id) }}"
+                                      action="{{ route('daily_requests.updateStatus', $req->id, false) }}"
                                       class="d-inline ms-1">
                                     @csrf
                                     <input type="hidden" name="status" value="rejeitada">
-                                    <button type="submit" class="btn btn-danger btn-sm">
+                                    <button type="submit" class="btn btn-danger btn-sm" {{ $turnoPassou ? 'disabled' : '' }}>
                                         Rejeitar
                                     </button>
                                 </form>
                                 <form method="POST"
-                                      action="{{ route('daily_requests.updateStatus', $req->id) }}"
+                                      action="{{ route('daily_requests.updateStatus', $req->id, false) }}"
                                       class="d-inline ms-1">
                                     @csrf
                                     <input type="hidden" name="status" value="cancelada">
-                                    <button type="submit" class="btn btn-outline-secondary btn-sm">
+                                    <button type="submit" class="btn btn-outline-secondary btn-sm" {{ $turnoPassou ? 'disabled' : '' }}>
                                         Cancelar
                                     </button>
                                 </form>
                             </div>
+                            @if ($turnoPassou)
+                                <div class="small text-muted mt-1">Horario encerrado.</div>
+                            @endif
                         </td>
                         <td class="text-end">
                             <div class="dropdown">
@@ -125,9 +193,8 @@
                         </td>
                     </tr>
                 @empty
-                    {{-- Linha exibida caso não haja requisições --}}
                     <tr>
-                        <td colspan="7" class="text-center">
+                        <td colspan="{{ $user->filial_id ? 7 : 8 }}" class="text-center">
                             Nenhuma requisição encontrada para esta empresa.
                         </td>
                     </tr>
@@ -136,7 +203,6 @@
         </table>
     </div>
 
-    {{-- Importa JS do Bootstrap (opcional para alguns componentes) --}}
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
