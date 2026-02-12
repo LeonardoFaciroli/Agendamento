@@ -1,4 +1,4 @@
-Este repositório reúne meus estudos que estou realizando atualmente com mais afinco.
+Este repositório reúne os estudos que estou realizando atualmente com mais afinco.
 - Fundamentos **HTTP/WEB**
 - **Laravel Routing** (rotas e controllers)
 - Arquitetura **MVC** (Model, View, Controller)
